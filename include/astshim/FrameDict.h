@@ -22,12 +22,12 @@
 #ifndef ASTSHIM_FRAMEDICT_H
 #define ASTSHIM_FRAMEDICT_H
 
-#include <algorithm>
-#include <cctype>
+#include <cassert>
 #include <memory>
+#include <set>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
-#include <utility>
 
 #include "astshim/base.h"
 #include "astshim/detail/utils.h"
@@ -37,11 +37,10 @@
 namespace ast {
 
 /**
-A convenience wrapper around FrameSet that maintains an internal lookup table ("dictionary")
-of frame domain:index for those contained frames that have non-empty domains.
+A FrameSet whose frames can be referenced by domain name.
 
-For every FrameSet method that takes a frame index, the same method in FrameDict
-may take a (case blind) domain name or a frame index.
+For every FrameSet method that takes a frame index, the same method in FrameDict may take a (case blind)
+domain name or a frame index.
 
 This has several useful applications:
 - Locate a frame without changing the FrameSet (findFrame is not a const method).
@@ -55,12 +54,9 @@ ignores case). Use FrameSet if you want a collection of Frames that may have mat
 it is merely a convenience wrapper around FrameSet.
 
 @note
-- AST casts all Frame domains to uppercase. This is one reason why domain comparison
-and domain lookup are case blind.
+- AST casts all Frame domains to uppercase. This is why domain comparison and domain lookup are case blind.
 - Some AST frame classes have default domain names, e.g. SkyFrame defaults to "SKY". Such default
 names are ignored in order to reduce the chance of accidental collisions.
-- This class is named "FrameDict" instead of "FrameMap", even though C++ lookup tables are usually
-std::map or unordered_map, in order to avoid confusion with AST Mapping.
 
 ### Attributes
 
@@ -81,7 +77,7 @@ public:
     @param[in] options  Comma-separated list of attribute assignments.
     */
     explicit FrameDict(Frame const &frame, std::string const &options = "") : FrameSet(frame, options) {
-        _rebuildDict();
+        _rebuildDict(false);
     }
 
     /**
@@ -99,7 +95,7 @@ public:
     explicit FrameDict(Frame const &baseFrame, Mapping const &mapping, Frame const &currentFrame,
                        std::string const &options = "")
             : FrameSet(baseFrame, mapping, currentFrame) {
-        _rebuildDict();
+        _rebuildDict(false);
     }
 
     /**
@@ -119,44 +115,34 @@ public:
     FrameDict &operator=(FrameDict &&) = default;
 
     /// Return a deep copy of this object.
-    std::shared_ptr<FrameSet> copy() const { return std::static_pointer_cast<FrameDict>(copyPolymorphic()); }
-
-    void addFrame(int iframe, Mapping const &map, Frame const &frame) override {
-        FrameSet::addFrame(iframe, map, frame);
-        _addFrameToDict(frame, FrameSet::getCurrent());
-    }
+    std::shared_ptr<FrameDict> copy() const { return std::static_pointer_cast<FrameDict>(copyPolymorphic()); }
 
     /**
-    Add a Frame connected by a Mapping to an existing initial Frame. A variant of FrameSet::addFrame
-    where the initial frame is specified by domain.
+    @copydoc FrameSet::addFrame
 
     @throws std::invalid_argument if `frame` has a non-empty domain and this FrameDict already
     contains a Frame with that domain
     */
-    void addFrame(std::string const &domain, Mapping const &map, Frame const &frame) {
-        addFrame(getIndex(domain), map, frame);
-    }
+    void addFrame(int iframe, Mapping const &map, Frame const &frame) override;
 
     /**
-    Get a list of the domain names for all contained Frames that have non-empty domain names.
-
-    The order of the names is unspecified.
+    Variant of @ref addFrame(int, Mapping const &, Frame const &) "addFrame(int, ...)"
+    where the initial frame is specified by domain.
     */
-    std::vector<std::string> getAllDomains() const {
-        std::vector<std::string> domains;
-        domains.reserve(_domainIndexDict.size());
-        for (auto const &item : _domainIndexDict) {
-            domains.emplace_back(item.first);
-        }
-        return domains;
-    }
+    void addFrame(std::string const &domain, Mapping const &map, Frame const &frame);
+
+    /**
+    Get the domain names for all contained Frames (excluding frames with empty or defaulted domain names).
+    */
+    std::set<std::string> getAllDomains() const;
 
     using FrameSet::getFrame;
 
     /**
-    Get a frame specified by domain
+    Variant of @ref FrameSet::getFrame "getFrame(int, bool)" where the frame
+    is specified by domain name.
 
-    @throw std::range_error if no frame found with the specified domain
+    @throw std::out_of_range if no frame found with the specified domain
     */
     std::shared_ptr<Frame> getFrame(std::string const &domain, bool copy = true) const {
         return FrameSet::getFrame(getIndex(domain), copy);
@@ -164,35 +150,46 @@ public:
 
     using FrameSet::getMapping;
 
-    //@{
     /**
-    Get a mapping from one frame to another, with one or both frames specified by domain
+    Variant of @ref FrameSet::getMapping(int, int) "getMapping(int, int)"
+    with the second frame specified by domain.
 
-    @throw std::range_error if no frame found with the specified from or to domain
+    @throw std::out_of_range if no frame found with the specified from or to domain
     */
     std::shared_ptr<Mapping> getMapping(int from, std::string const &to) const {
         return FrameSet::getMapping(from, getIndex(to));
     }
+
+    /**
+    Variant of @ref FrameSet::getMapping(int, int) "getMapping(int, int)"
+    with the first frame specified by domain.
+
+    @throw std::out_of_range if no frame found with the specified from or to domain
+    */
     std::shared_ptr<Mapping> getMapping(std::string const &from, int to) const {
         return FrameSet::getMapping(getIndex(from), to);
     }
+
+    /**
+    Variant of @ref FrameSet::getMapping(int, int) "getMapping(int, int)"
+    with the both frames specified by domain.
+
+    @throw std::out_of_range if no frame found with the specified from or to domain
+    */
     std::shared_ptr<Mapping> getMapping(std::string const &from, std::string const &to) const {
         return FrameSet::getMapping(getIndex(from), getIndex(to));
     }
-    //@}
 
     /**
     Get the index of a frame specified by domain
 
-    @throw std::range_error if no frame found with the specified domain
+    @throw std::out_of_range if no frame found with the specified domain
     */
     int getIndex(std::string const &domain) const {
-        std::string domainUppercase(domain.size(), ' ');
-        std::transform(domain.begin(), domain.end(), domainUppercase.begin(),
-                   [](unsigned char c) -> unsigned char { return std::toupper(c); });
-        auto it = _domainIndexDict.find(domainUppercase);
+        auto domainUpper = detail::stringToUpper(domain);
+        auto it = _domainIndexDict.find(domainUpper);
         if (it == _domainIndexDict.end()) {
-            throw std::range_error("No frame found with domain " + domain);
+            throw std::out_of_range("No frame found with domain " + domain);
         }
         return it->second;
     }
@@ -200,61 +197,63 @@ public:
     /**
     Return True if a frame in this FrameDict has the specified domain
     */
-    bool hasDomain(std::string const &domain) const { return bool(_domainIndexDict.count(domain) > 0); }
+    bool hasDomain(std::string const &domain) const { return _domainIndexDict.count(domain) > 0; }
 
     using FrameSet::mirrorVariants;
 
     /**
-    Call mirrorVariants with a frame specified by domain
+    Variant of @ref FrameSet::mirrorVariants(int) "mirrorVariants(int)" with the frame specified by domain
 
-    @throw std::range_error if no frame found with the specified domain
+    @throw std::out_of_range if no frame found with the specified domain
     */
     void mirrorVariants(std::string const &domain) { FrameSet::mirrorVariants(getIndex(domain)); }
 
     using FrameSet::remapFrame;
 
     /**
-    Remap a frame specified by domain
+    Variant of @ref FrameSet::remapFrame(int, Mapping&) "remapFrame(int, ...)" with the frame
+    specified by domain
 
-    @throw std::range_error if no frame found with the specified domain
+    @throw std::out_of_range if no frame found with the specified domain
     */
     void remapFrame(std::string const &domain, Mapping &map) { FrameSet::remapFrame(getIndex(domain), map); }
 
     using FrameSet::removeFrame;
 
     /**
-    Remove a frame specified by domain
+    Variant of @ref FrameSet::removeFrame(int) "removeFrame(int)" with the frame specified by domain
 
-    @throw std::range_error if no frame found with the specified domain
+    @throw std::out_of_range if no frame found with the specified domain
     */
     void removeFrame(std::string const &domain) {
         FrameSet::removeFrame(getIndex(domain));
-        _rebuildDict();
+        _rebuildDict(true);
     }
 
     using FrameSet::setBase;
 
     /**
-    Set the base frame to a frame specified by domain
+    Variant of @ref FrameSet::setBase(int) "setBase(int)" with the frame specified by domain
 
-    @throw std::range_error if no frame found with the specified domain
+    @throw std::out_of_range if no frame found with the specified domain
     */
     void setBase(std::string const &domain) { FrameSet::setBase(getIndex(domain)); }
 
     using FrameSet::setCurrent;
 
     /**
-    Set the current frame to a frame specified by domain
+    Variant of @ref FrameSet::setCurrent(int) "setCurrent(int)" with the frame specified by domain
 
-    @throw std::range_error if no frame found with the specified domain
+    @throw std::out_of_range if no frame found with the specified domain
     */
     void setCurrent(std::string const &domain) { FrameSet::setCurrent(getIndex(domain)); }
 
-    /// Set the domain of the current frame (and update the internal dict)
-    void setDomain(std::string const &domain) override {
-        Frame::setDomain(domain);
-        _rebuildDict();
-    }
+    /**
+    Set the domain of the current frame (and update the internal dict).
+
+    @throws std::invalid_argument if another frame already has this domain
+    */
+    void setDomain(std::string const &domain) override;
 
 protected:
     virtual std::shared_ptr<Object> copyPolymorphic() const override {
@@ -262,40 +261,43 @@ protected:
     }
 
     /// Construct a FrameDict from a raw AST pointer
-    explicit FrameDict(AstFrameSet *rawptr) : FrameSet(rawptr) {
-        if (!astIsAFrameSet(getRawPtr())) {
-            std::ostringstream os;
-            os << "this is a " << getClassName() << ", which is not a FrameSet";
-            throw std::invalid_argument(os.str());
-        }
-        _rebuildDict();
-    }
+    explicit FrameDict(AstFrameSet *rawptr);
 
 private:
-    // Rebuild the internal domain:index dictionary
-    void _rebuildDict() {
+    /*
+    Rebuild the internal domain:index dictionary
+
+    @param[in] doAssert  If a Frame already exists with this domain then assert if true,
+                        else throw std::invalid_argument. False is only appropriate for constructors.
+    */
+    void _rebuildDict(bool doAssert) {
         _domainIndexDict.clear();
         for (int index = 1, end = getNFrame(); index <= end; ++index) {
             auto const frame = FrameSet::getFrame(index, false);
-            _addFrameToDict(*frame, index);
+            _addFrameToDict(*frame, index, doAssert);
         }
     }
 
     /*
     Add one frame to the internal domain:index dictionary
 
-    Silently do nothing if the frame has a defaulted (e.g. SkyFrame defaults to "SKY")
-    or empty domain.
+    Silently do nothing if the frame has a defaulted domain (e.g. SkyFrame defaults to "SKY")
+    or an empty domain.
 
-    Throw std::invalid_argument if the dict already contains a frame with the same domain
+    @param[in] frame  Frame to add to dictionary
+    @param[in] index  Index of frame in FrameSet
+    @param[in] doAssert  If a Frame already exists with this domain then assert if true,
+                        else throw std::invalid_argument. False is only appropriate for constructors.
     */
-    void _addFrameToDict(Frame const &frame, int index) {
+    void _addFrameToDict(Frame const &frame, int index, bool doAssert) {
         if (frame.test("Domain")) {
             auto domain = frame.getDomain();
             if (domain.empty()) {
                 return;
             }
-            if (hasDomain(domain)) {
+            if (doAssert) {
+                assert(!hasDomain(domain));
+            } else if (hasDomain(domain)) {
                 throw std::invalid_argument("More than one frame with domain " + domain);
             }
             _domainIndexDict[domain] = index;

@@ -11,8 +11,8 @@ from astshim.test import MappingTestCase
 class TestFrameDict(MappingTestCase):
 
     def setUp(self):
-        self.frame1 = ast.Frame(2, "Domain=frame1")
-        self.frame2 = ast.Frame(2, "Domain=frame2")
+        self.frame1 = ast.Frame(2, "Domain=frame1, Ident=f1")
+        self.frame2 = ast.Frame(2, "Domain=frame2, Ident=f2")
         self.zoom = 1.5
         self.zoomMap = ast.ZoomMap(2, self.zoom, "Ident=zoomMap")
         self.initialNumFrames = self.frame1.getNObject()  # may be >2 when run using pytest
@@ -28,12 +28,12 @@ class TestFrameDict(MappingTestCase):
         frameDict = ast.FrameDict(self.frame1)
         self.assertIsInstance(frameDict, ast.FrameDict)
         self.assertEqual(frameDict.nFrame, 1)
-        self.assertEqual(frameDict.getAllDomains(), ["FRAME1"])
+        self.assertEqual(frameDict.getAllDomains(), set(["FRAME1"]))
         self.assertEqual(frameDict.getIndex("frame1"), 1)  # should be case blind
 
-        with self.assertRaises(ValueError):
+        with self.assertRaises(IndexError):
             frameDict.getIndex("missingDomain")
-        with self.assertRaises(ValueError):
+        with self.assertRaises(IndexError):
             frameDict.getIndex("")
 
         # Make sure the frame is deep copied
@@ -57,7 +57,7 @@ class TestFrameDict(MappingTestCase):
         self.checkPersistence(frameDict)
         self.checkDict(frameDict)
 
-    def testFrameDictFrameSetConstructor(self):
+    def test_FrameDictFrameSetConstructor(self):
         frameSet = ast.FrameSet(self.frame1, self.zoomMap, self.frame2)
         frameDict = ast.FrameDict(frameSet)
 
@@ -73,9 +73,9 @@ class TestFrameDict(MappingTestCase):
         self.assertEqual(self.frame1.getNObject(), self.initialNumFrames + 1)
         frameDict.addFrame(1, self.zoomMap, self.frame2)
         self.assertEqual(frameDict.nFrame, 2)
-        self.frame2.domain = "NEWDOMAIN"
         self.assertEqual(frameDict.getFrame("FRAME2").domain, "FRAME2")
         self.assertEqual(frameDict.getFrame(frameDict.CURRENT).domain, "FRAME2")
+        self.assertEqual(frameDict.getAllDomains(), set(["FRAME1", "FRAME2"]))
         self.assertEqual(self.frame2.getRefCount(), 1)
         self.assertEqual(self.frame1.getNObject(), self.initialNumFrames + 2)
 
@@ -89,14 +89,23 @@ class TestFrameDict(MappingTestCase):
         self.checkPersistence(frameDict)
         self.checkDict(frameDict)
 
-    def testFrameDictFrameMappingFrameConstructor(self):
+        # make sure we can't add a frame with a duplicate domain name
+        # and that attempting to do so leave the FrameDict unchanged
+        duplicateFrame = ast.Frame(2, "Domain=FRAME1, Ident=duplicate")
+        with self.assertRaises(ValueError):
+            frameDict.addFrame(1, self.zoomMap, duplicateFrame)
+        self.assertEqual(frameDict.getAllDomains(), set(["FRAME1", "FRAME2"]))
+        self.assertEqual(frameDict.getFrame("FRAME1").ident, "f1")
+        self.checkDict(frameDict)
+
+    def test_FrameDictFrameMappingFrameConstructor(self):
         frameDict = ast.FrameDict(self.frame1, self.zoomMap, self.frame2)
         self.assertEqual(frameDict.nFrame, 2)
         self.assertEqual(frameDict.base, 1)
         self.assertEqual(frameDict.getIndex("FRAME1"), 1)
         self.assertEqual(frameDict.current, 2)
         self.assertEqual(frameDict.getIndex("frame2"), 2)
-        self.assertEqual(set(frameDict.getAllDomains()), set(["FRAME1", "FRAME2"]))
+        self.assertEqual(frameDict.getAllDomains(), set(["FRAME1", "FRAME2"]))
 
         # make sure all objects were deep copied
         self.frame1.domain = "newBase"
@@ -138,6 +147,28 @@ class TestFrameDict(MappingTestCase):
         self.assertEqual(self.zoomMap.getNObject(), self.initialNumZoomMap + 5)
         self.checkDict(frameDict)
 
+        # try to get invalid frames by name and index; test all combinations
+        # of the "from" and "to" index being valid or invalid
+        indexIsValidList = (
+            (1, True),
+            (3, False),
+            ("Frame1", True),
+            ("BadFrame", False),
+            ("", False),
+        )
+        for fromIndex, fromValid in indexIsValidList:
+            for toIndex, toValid in indexIsValidList:
+                if fromValid and toValid:
+                    mapping = frameDict.getMapping(fromIndex, toIndex)
+                    self.assertIsInstance(mapping, ast.Mapping)
+                else:
+                    with self.assertRaises((IndexError, RuntimeError)):
+                        frameDict.getMapping(fromIndex, toIndex)
+
+        # make sure the errors did not mess up the FrameDict
+        self.assertEqual(frameDict.getAllDomains(), set(["FRAME1", "FRAME2"]))
+        self.checkDict(frameDict)
+
     def test_FrameDictRemoveFrame(self):
         frameDict = ast.FrameDict(self.frame1, self.zoomMap, self.frame2)
         self.assertEqual(frameDict.getIndex("FRAME1"), 1)
@@ -147,7 +178,7 @@ class TestFrameDict(MappingTestCase):
 
         # remove the frame named "FRAME1", leaving the frame named "FRAME2"
         frameDict.removeFrame("FRAME1")
-        self.assertEqual(frameDict.getAllDomains(), ["FRAME2"])
+        self.assertEqual(frameDict.getAllDomains(), set(["FRAME2"]))
         self.assertEqual(frameDict.nFrame, 1)
         self.assertEqual(frameDict.getIndex("FRAME2"), 1)
         self.assertEqual(frameDict.getFrame("FRAME2").domain, "FRAME2")
@@ -160,6 +191,31 @@ class TestFrameDict(MappingTestCase):
         with self.assertRaises(RuntimeError):
             frameDict.removeFrame(1)
 
+        self.checkDict(frameDict)
+
+    def test_FrameDictGetFrameAndGetIndex(self):
+        frameDict = ast.FrameDict(self.frame1, self.zoomMap, self.frame2)
+        self.assertEqual(frameDict.getIndex("frame1"), 1)
+        self.assertEqual(frameDict.getFrame(1).domain, "FRAME1")
+        self.assertEqual(frameDict.getFrame(frameDict.BASE).domain, "FRAME1")
+        self.assertEqual(frameDict.getFrame("FRAME1").domain, "FRAME1")
+
+        self.assertEqual(frameDict.getIndex("frame2"), 2)
+        self.assertEqual(frameDict.getFrame(2).domain, "FRAME2")
+        self.assertEqual(frameDict.getFrame(frameDict.CURRENT).domain, "FRAME2")
+        self.assertEqual(frameDict.getFrame("FRAME2").domain, "FRAME2")
+
+        # test on invalid indices
+        for badDomain in ("badName", ""):
+            with self.assertRaises(IndexError):
+                frameDict.getFrame(badDomain)
+            with self.assertRaises(IndexError):
+                frameDict.getIndex(badDomain)
+        with self.assertRaises(RuntimeError):
+            frameDict.getFrame(3)
+
+        # make sure the errors did not mess up the FrameDict
+        self.assertEqual(frameDict.getAllDomains(), set(["FRAME1", "FRAME2"]))
         self.checkDict(frameDict)
 
     def test_FrameDictRemapFrame(self):
@@ -248,7 +304,7 @@ class TestFrameDict(MappingTestCase):
         self.assertAlmostEqual(frameDict.applyForward([x, y, z]), [x, y])
         self.assertAlmostEqual(frameDict.applyInverse([x, y]), [x, y, z])
 
-    def testFrameDictSetBaseCurrent(self):
+    def test_FrameDictSetBaseCurrent(self):
         frameDict = ast.FrameDict(self.frame1, self.zoomMap, self.frame2)
         self.assertEqual(frameDict.base, 1)
         self.assertEqual(frameDict.current, 2)
@@ -280,19 +336,33 @@ class TestFrameDict(MappingTestCase):
         predictedOutput3 = indata.copy() / self.zoom
         assert_allclose(frameDict.applyForward(indata), predictedOutput3)
 
-    def testFrameDictSetDomain(self):
+    def test_FrameDictSetDomain(self):
         frameDict = ast.FrameDict(self.frame1, self.zoomMap, self.frame2)
         frameDict.setCurrent("FRAME1")
         frameDict.setDomain("NEWFRAME1")
-        self.assertEqual(set(frameDict.getAllDomains()), set(["NEWFRAME1", "FRAME2"]))
+        self.assertEqual(frameDict.getAllDomains(), set(["NEWFRAME1", "FRAME2"]))
         self.assertEqual(frameDict.getIndex("newFrame1"), 1)
         self.assertEqual(frameDict.getIndex("FRAME2"), 2)
 
         frameDict.setCurrent("FRAME2")
         frameDict.setDomain("NEWFRAME2")
-        self.assertEqual(set(frameDict.getAllDomains()), set(["NEWFRAME1", "NEWFRAME2"]))
+        self.assertEqual(frameDict.getAllDomains(), set(["NEWFRAME1", "NEWFRAME2"]))
         self.assertEqual(frameDict.getIndex("NEWFRAME1"), 1)
         self.assertEqual(frameDict.getIndex("NEWFRAME2"), 2)
+
+        # Renaming a domain to itself should have no effect
+        self.assertEqual(frameDict.getFrame(frameDict.CURRENT).domain, "NEWFRAME2")
+        frameDict.setDomain("NEWFRAME2")
+        self.assertEqual(frameDict.getFrame(frameDict.CURRENT).domain, "NEWFRAME2")
+        self.assertEqual(frameDict.getAllDomains(), set(["NEWFRAME1", "NEWFRAME2"]))
+
+        # Make sure setDomain cannot be used to rename a domain to a duplicate
+        # and that this leaves the frameDict unchanged
+        self.assertEqual(frameDict.getFrame(frameDict.CURRENT).domain, "NEWFRAME2")
+        with self.assertRaises(ValueError):
+            frameDict.setDomain("NEWFRAME1")
+        self.assertEqual(frameDict.getFrame(frameDict.CURRENT).domain, "NEWFRAME2")
+        self.assertEqual(frameDict.getAllDomains(), set(["NEWFRAME1", "NEWFRAME2"]))
 
 
 if __name__ == "__main__":
