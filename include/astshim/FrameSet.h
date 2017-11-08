@@ -437,7 +437,7 @@ public:
 
     @throws std::runtime_error if you attempt to remove the last frame
     */
-    void removeFrame(int iframe) {
+    virtual void removeFrame(int iframe) {
         astRemoveFrame(getRawPtr(), iframe);
         assertOK();
     }

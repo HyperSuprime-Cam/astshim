@@ -67,9 +67,7 @@ class TestFrameDict(MappingTestCase):
         assert_allclose(frameDict.applyInverse(predictedOut), indata)
 
     def test_FrameDictAddFrame(self):
-        self.initialNumFrames = self.frame1.getNObject()  # may be >1 when run using pytest
         frameDict = ast.FrameDict(self.frame1)
-
         self.assertEqual(self.frame1.getNObject(), self.initialNumFrames + 1)
         frameDict.addFrame(1, self.zoomMap, self.frame2)
         self.assertEqual(frameDict.nFrame, 2)
@@ -106,6 +104,8 @@ class TestFrameDict(MappingTestCase):
         self.assertEqual(frameDict.current, 2)
         self.assertEqual(frameDict.getIndex("frame2"), 2)
         self.assertEqual(frameDict.getAllDomains(), set(["FRAME1", "FRAME2"]))
+        self.assertEqual(self.frame1.getNObject(), self.initialNumFrames + 2)
+        self.assertEqual(self.zoomMap.getNObject(), self.initialNumZoomMap + 1)
 
         # make sure all objects were deep copied
         self.frame1.domain = "newBase"
@@ -171,19 +171,39 @@ class TestFrameDict(MappingTestCase):
 
     def test_FrameDictRemoveFrame(self):
         frameDict = ast.FrameDict(self.frame1, self.zoomMap, self.frame2)
+        zoomMap2 = ast.ZoomMap(2, 1.3, "Ident=zoomMap2")
+        frame3 = ast.Frame(2, "Domain=FRAME3, Ident=f3")
+        frameDict.addFrame(2, zoomMap2, frame3)
+        self.assertEqual(frameDict.getAllDomains(), set(["FRAME1", "FRAME2", "FRAME3"]))
         self.assertEqual(frameDict.getIndex("FRAME1"), 1)
         self.assertEqual(frameDict.getIndex("FRAME2"), 2)
-        self.assertEqual(self.frame1.getNObject(), self.initialNumFrames + 2)
-        self.assertEqual(self.zoomMap.getNObject(), self.initialNumZoomMap + 1)
+        self.assertEqual(frameDict.getIndex("FRAME3"), 3)
+        self.assertEqual(self.frame1.getNObject(), self.initialNumFrames + 4)
+        self.assertEqual(self.zoomMap.getNObject(), self.initialNumZoomMap + 3)
 
-        # remove the frame named "FRAME1", leaving the frame named "FRAME2"
+        # remove the frame named "FRAME1" by name
+        # this will also remove one of the two zoom maps
         frameDict.removeFrame("FRAME1")
+        self.checkDict(frameDict)
+        self.assertEqual(frameDict.getAllDomains(), set(["FRAME2", "FRAME3"]))
+        self.assertEqual(frameDict.nFrame, 2)
+        self.assertEqual(frameDict.getIndex("FRAME2"), 1)
+        self.assertEqual(frameDict.getIndex("FRAME3"), 2)
+        self.assertEqual(frameDict.getFrame("FRAME2").domain, "FRAME2")
+        self.assertEqual(frameDict.getFrame("FRAME3").domain, "FRAME3")
+        self.assertEqual(self.frame1.getNObject(), self.initialNumFrames + 3)
+        self.assertEqual(self.zoomMap.getNObject(), self.initialNumZoomMap + 2)
+
+        # remove the frame "FRAME3" by index
+        # this will also remove the remaining zoom map
+        frameDict.removeFrame(2)
+        self.checkDict(frameDict)
         self.assertEqual(frameDict.getAllDomains(), set(["FRAME2"]))
         self.assertEqual(frameDict.nFrame, 1)
         self.assertEqual(frameDict.getIndex("FRAME2"), 1)
         self.assertEqual(frameDict.getFrame("FRAME2").domain, "FRAME2")
-        self.assertEqual(self.frame1.getNObject(), self.initialNumFrames + 1)
-        self.assertEqual(self.zoomMap.getNObject(), self.initialNumZoomMap)
+        self.assertEqual(self.frame1.getNObject(), self.initialNumFrames + 2)
+        self.assertEqual(self.zoomMap.getNObject(), self.initialNumZoomMap + 1)
         frameDeep = frameDict.getFrame(1)
         self.assertEqual(frameDeep.domain, "FRAME2")
 

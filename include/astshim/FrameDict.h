@@ -77,7 +77,7 @@ public:
     @param[in] options  Comma-separated list of attribute assignments.
     */
     explicit FrameDict(Frame const &frame, std::string const &options = "") : FrameSet(frame, options) {
-        _rebuildDict(false);
+        _domainIndexDict = _makeNewDict(*this);
     }
 
     /**
@@ -95,7 +95,7 @@ public:
     explicit FrameDict(Frame const &baseFrame, Mapping const &mapping, Frame const &currentFrame,
                        std::string const &options = "")
             : FrameSet(baseFrame, mapping, currentFrame) {
-        _rebuildDict(false);
+        _domainIndexDict = _makeNewDict(*this);
     }
 
     /**
@@ -218,17 +218,15 @@ public:
     */
     void remapFrame(std::string const &domain, Mapping &map) { FrameSet::remapFrame(getIndex(domain), map); }
 
-    using FrameSet::removeFrame;
+    /// @copydoc FrameSet::removeFrame
+    void removeFrame(int iframe) override;
 
     /**
     Variant of @ref FrameSet::removeFrame(int) "removeFrame(int)" with the frame specified by domain
 
     @throw std::out_of_range if no frame found with the specified domain
     */
-    void removeFrame(std::string const &domain) {
-        FrameSet::removeFrame(getIndex(domain));
-        _rebuildDict(true);
-    }
+    void removeFrame(std::string const &domain);
 
     using FrameSet::setBase;
 
@@ -237,7 +235,7 @@ public:
 
     @throw std::out_of_range if no frame found with the specified domain
     */
-    void setBase(std::string const &domain) { FrameSet::setBase(getIndex(domain)); }
+    void setBase(std::string const &domain) { setBase(getIndex(domain)); }
 
     using FrameSet::setCurrent;
 
@@ -246,7 +244,7 @@ public:
 
     @throw std::out_of_range if no frame found with the specified domain
     */
-    void setCurrent(std::string const &domain) { FrameSet::setCurrent(getIndex(domain)); }
+    void setCurrent(std::string const &domain) { setCurrent(getIndex(domain)); }
 
     /**
     Set the domain of the current frame (and update the internal dict).
@@ -260,48 +258,25 @@ protected:
         return copyImpl<FrameDict, AstFrameSet>();
     }
 
+    std::shared_ptr<FrameSet> getFrameSet() const {
+        return std::static_pointer_cast<FrameSet>(copyImpl<FrameSet, AstFrameSet>());
+    }
+
     /// Construct a FrameDict from a raw AST pointer
     explicit FrameDict(AstFrameSet *rawptr);
 
 private:
     /*
-    Rebuild the internal domain:index dictionary
-
-    @param[in] doAssert  If a Frame already exists with this domain then assert if true,
-                        else throw std::invalid_argument. False is only appropriate for constructors.
+    Build a new domain:index dict from a FrameSet
     */
-    void _rebuildDict(bool doAssert) {
-        _domainIndexDict.clear();
-        for (int index = 1, end = getNFrame(); index <= end; ++index) {
-            auto const frame = FrameSet::getFrame(index, false);
-            _addFrameToDict(*frame, index, doAssert);
-        }
-    }
+    std::unordered_map<std::string, int> _makeNewDict(FrameSet const &frameSet) const;
 
     /*
-    Add one frame to the internal domain:index dictionary
-
-    Silently do nothing if the frame has a defaulted domain (e.g. SkyFrame defaults to "SKY")
-    or an empty domain.
-
-    @param[in] frame  Frame to add to dictionary
-    @param[in] index  Index of frame in FrameSet
-    @param[in] doAssert  If a Frame already exists with this domain then assert if true,
-                        else throw std::invalid_argument. False is only appropriate for constructors.
+    Build a new domain::index dict and, if successful, swap the frame set data
     */
-    void _addFrameToDict(Frame const &frame, int index, bool doAssert) {
-        if (frame.test("Domain")) {
-            auto domain = frame.getDomain();
-            if (domain.empty()) {
-                return;
-            }
-            if (doAssert) {
-                assert(!hasDomain(domain));
-            } else if (hasDomain(domain)) {
-                throw std::invalid_argument("More than one frame with domain " + domain);
-            }
-            _domainIndexDict[domain] = index;
-        }
+    void _update(FrameSet &frameSet) {
+        _domainIndexDict = _makeNewDict(frameSet);
+        this->swapRawPointers(frameSet);
     }
 
     std::unordered_map<std::string, int> _domainIndexDict;  // Dict of frame domain:index

@@ -19,7 +19,6 @@
  * the GNU General Public License along with this program.  If not,
  * see <https://www.lsstcorp.org/LegalNotices/>.
  */
-#include <cassert>
 #include <memory>
 #include <set>
 #include <sstream>
@@ -34,8 +33,9 @@ void FrameDict::addFrame(int iframe, Mapping const &map, Frame const &frame) {
     if (hasDomain(frame.getDomain())) {
         throw std::invalid_argument("A frame already exists with domain " + frame.getDomain());
     }
-    FrameSet::addFrame(iframe, map, frame);
-    _addFrameToDict(frame, FrameSet::getCurrent(), true);
+    auto copy = getFrameSet();
+    copy->addFrame(iframe, map, frame);
+    _update(*copy);
 }
 
 void FrameDict::addFrame(std::string const &domain, Mapping const &map, Frame const &frame) {
@@ -50,6 +50,14 @@ std::set<std::string> FrameDict::getAllDomains() const {
     return domains;
 }
 
+void FrameDict::removeFrame(int iframe) {
+    auto copy = getFrameSet();
+    copy->removeFrame(iframe);
+    _update(*copy);
+}
+
+void FrameDict::removeFrame(std::string const &domain) { removeFrame(getIndex(domain)); }
+
 void FrameDict::setDomain(std::string const &domain) {
     if (getDomain() == domain) {
         // null rename
@@ -58,8 +66,9 @@ void FrameDict::setDomain(std::string const &domain) {
     if (hasDomain(domain)) {
         throw std::invalid_argument("Another framea already has domain name " + domain);
     }
-    Frame::setDomain(domain);
-    _rebuildDict(true);
+    auto copy = getFrameSet();
+    copy->setDomain(domain);
+    _update(*copy);
 }
 
 FrameDict::FrameDict(AstFrameSet *rawptr) : FrameSet(rawptr) {
@@ -68,7 +77,21 @@ FrameDict::FrameDict(AstFrameSet *rawptr) : FrameSet(rawptr) {
         os << "this is a " << getClassName() << ", which is not a FrameSet";
         throw std::invalid_argument(os.str());
     }
-    _rebuildDict(false);
+    _domainIndexDict = _makeNewDict(*this);
+}
+
+std::unordered_map<std::string, int> FrameDict::_makeNewDict(FrameSet const &frameSet) const {
+    std::unordered_map<std::string, int> dict;
+    for (int index = 1, end = frameSet.getNFrame(); index <= end; ++index) {
+        auto const domain = frameSet.getFrame(index, false)->getDomain();
+        if (domain.empty()) {
+            continue;
+        } else if (dict.count(domain) > 0) {
+            throw std::invalid_argument("More than one frame with domain " + domain);
+        }
+        dict[domain] = index;
+    }
+    return dict;
 }
 
 }  // namespace ast
