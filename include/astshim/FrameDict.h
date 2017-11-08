@@ -145,7 +145,7 @@ public:
     @throw std::out_of_range if no frame found with the specified domain
     */
     std::shared_ptr<Frame> getFrame(std::string const &domain, bool copy = true) const {
-        return FrameSet::getFrame(getIndex(domain), copy);
+        return getFrame(getIndex(domain), copy);
     }
 
     using FrameSet::getMapping;
@@ -157,7 +157,7 @@ public:
     @throw std::out_of_range if no frame found with the specified from or to domain
     */
     std::shared_ptr<Mapping> getMapping(int from, std::string const &to) const {
-        return FrameSet::getMapping(from, getIndex(to));
+        return getMapping(from, getIndex(to));
     }
 
     /**
@@ -167,7 +167,7 @@ public:
     @throw std::out_of_range if no frame found with the specified from or to domain
     */
     std::shared_ptr<Mapping> getMapping(std::string const &from, int to) const {
-        return FrameSet::getMapping(getIndex(from), to);
+        return getMapping(getIndex(from), to);
     }
 
     /**
@@ -177,7 +177,7 @@ public:
     @throw std::out_of_range if no frame found with the specified from or to domain
     */
     std::shared_ptr<Mapping> getMapping(std::string const &from, std::string const &to) const {
-        return FrameSet::getMapping(getIndex(from), getIndex(to));
+        return getMapping(getIndex(from), getIndex(to));
     }
 
     /**
@@ -206,7 +206,7 @@ public:
 
     @throw std::out_of_range if no frame found with the specified domain
     */
-    void mirrorVariants(std::string const &domain) { FrameSet::mirrorVariants(getIndex(domain)); }
+    void mirrorVariants(std::string const &domain) { mirrorVariants(getIndex(domain)); }
 
     using FrameSet::remapFrame;
 
@@ -216,7 +216,7 @@ public:
 
     @throw std::out_of_range if no frame found with the specified domain
     */
-    void remapFrame(std::string const &domain, Mapping &map) { FrameSet::remapFrame(getIndex(domain), map); }
+    void remapFrame(std::string const &domain, Mapping &map) { remapFrame(getIndex(domain), map); }
 
     /// @copydoc FrameSet::removeFrame
     void removeFrame(int iframe) override;
